@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <rect width="48" height="48" rx="13" fill="var(--accent, #315dcc)" />
+  <g fill="var(--on-accent, #ffffff)">
+    <path d="M17 26l15 6" stroke="var(--on-accent, #ffffff)" stroke-width="3.5" />
+    <circle cx="17" cy="26" r="8.5" />
+    <circle cx="32" cy="32" r="5.25" />
+    <rect x="29" y="13" width="9" height="3.5" rx="1.75" />
+  </g>
+</svg>

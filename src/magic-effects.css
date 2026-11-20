@@ -1,0 +1,352 @@
+:root {
+  --magic-blue: #547df0;
+  --magic-violet: #9371e9;
+  --magic-cyan: #3abbbf;
+}
+.main-workspace {
+  isolation: isolate;
+}
+.workspace-flow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.flow-field {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+}
+.workspace-flow.flow-active {
+  animation: field-arrive 250ms var(--ease-out) both;
+}
+@keyframes field-arrive {
+  from { opacity: 0; }
+}
+
+.workspace-flow .flow-field {
+  opacity: .74;
+  mask-image: linear-gradient(90deg, #000 4%, #0008 36%, #0007 62%, #000 96%);
+}
+
+.assistant-message {
+  container-type: inline-size;
+}
+.assistant-avatar {
+  position: relative;
+  --avatar-half: 15px;
+}
+.avatar-mark {
+  display: grid;
+  transition: opacity 180ms ease;
+}
+.is-waiting .avatar-mark { opacity: 0; }
+.is-docking .avatar-mark { transition-delay: 295ms; }
+.traveling-dots {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2;
+  width: 64px;
+  height: 64px;
+  left: calc(50% - 32px);
+  top: calc(50% - 32px);
+  transform: scale(.32);
+  opacity: 0;
+  transition: transform 460ms var(--ease-out), opacity 200ms ease 260ms;
+}
+.is-waiting .traveling-dots {
+  opacity: 1;
+  transform: translate(calc(50cqw - var(--avatar-half)), 62px);
+}
+.thinking-space {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 460ms var(--ease-out);
+}
+.thinking-space > div { min-height: 0; overflow-y: clip; }
+.is-docking .thinking-space { grid-template-rows: 0fr; }
+.thinking-stage {
+  box-sizing: border-box;
+  width: 100cqw;
+  margin-inline-start: calc(100% - 100cqw);
+  text-align: center;
+  padding: 78px 12px 12px;
+  color: var(--muted);
+  font-size: .8125rem;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 620px) {
+  .assistant-avatar { --avatar-half: 12.5px; }
+}
+.chat-link > .chat-working {
+  margin-block-start: 0.5em;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+@media (max-width: 400px) {
+  .assistant-message .assistant-avatar {
+    display: grid;
+  }
+}
+.conversation-scroll,
+.composer-dock {
+  position: relative;
+}
+.interaction-ripple {
+  position: fixed;
+  z-index: 300;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--magic-violet) 12%, transparent),
+    transparent 70%
+  );
+}
+.new-response-button {
+  position: sticky;
+  z-index: 3;
+  inset-block-start: 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  margin: 12px auto -38px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--accent-dim);
+  box-shadow: var(--shadow-soft);
+  font-size: 0.75rem;
+  font-weight: 550;
+  transition:
+    opacity 160ms ease,
+    transform 200ms var(--ease-out);
+}
+.new-response-button[hidden] {
+  display: flex;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+}
+.new-response-button:not([hidden]) {
+  animation: response-prompt-in 200ms var(--ease-out) both;
+}
+.prompt-icon,
+.prompt-arrow,
+.topbar-right .icon-button > svg,
+.message-actions button > svg {
+  transition:
+    transform 160ms var(--ease-out),
+    color 160ms ease;
+}
+.effects-toggle[aria-pressed='true'] {
+  color: var(--accent-dim);
+}
+.effects-toggle[aria-pressed='false'] {
+  color: var(--faint);
+}
+.send-button {
+  position: relative;
+}
+.composer-shell.has-draft .send-button:not(.stop-button) {
+  box-shadow: 0 3px 18px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.send-button > svg {
+  transition: transform 160ms var(--ease-out);
+}
+.composer textarea {
+  caret-color: var(--accent-dim);
+}
+/* Fresh messages animate once; history is already in place. */
+.message.is-arriving {
+  animation: message-arrive 250ms var(--ease-out) both;
+}
+.user-message.is-arriving {
+  animation-name: user-message-arrive;
+}
+.user-message-content {
+  background: linear-gradient(
+    135deg,
+    var(--surface),
+    color-mix(in srgb, var(--accent-soft) 55%, var(--surface))
+  );
+}
+.stream-word {
+  animation: word-materialize 200ms var(--ease-out) both;
+}
+.response-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-dim);
+  font-size: 0.6875rem;
+  animation: ready-reveal 250ms var(--ease-out) both;
+}
+.message-actions button.is-copied {
+  color: var(--accent-dim);
+  background: var(--accent-soft);
+}
+.message-actions button.is-copied > svg {
+  transform: scale(1.12);
+}
+.sources a,
+.sources-trigger {
+  transition:
+    transform 160ms var(--ease-out),
+    border-color 160ms ease;
+}
+.image-result-frame.is-loaded {
+  animation: image-materialize 250ms var(--ease-out) both;
+}
+.image-card-completed .image-results {
+  animation: image-results-arrive 320ms var(--ease-out) both;
+}
+.image-card-completed .image-card-badge {
+  animation: image-badge-settle 700ms var(--ease-out) both;
+}
+@media (hover: hover) and (pointer: fine) {
+  .send-button:not(:disabled):hover > svg {
+    transform: translateY(-2px);
+  }
+  .effects-toggle:hover > svg {
+    transform: rotate(30deg);
+  }
+  .sources a:hover,
+  .sources-trigger:hover {
+    transform: translateY(-1px);
+  }
+}
+@starting-style {
+  .toast {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+.toast {
+  transition:
+    opacity 200ms var(--ease-out),
+    translate 200ms var(--ease-out);
+}
+
+@keyframes message-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes user-message-arrive {
+  from {
+    opacity: 0;
+    transform: translate(8px, 8px) scale(0.98);
+  }
+}
+@keyframes word-materialize {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes ready-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+@keyframes response-prompt-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes image-results-arrive {
+  from {
+    opacity: 0.35;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes image-badge-settle {
+  0% {
+    transform: scale(0.96);
+  }
+  65% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes image-materialize {
+  from {
+    opacity: 0.4;
+    transform: scale(0.98);
+  }
+}
+.effects-off
+  :is(
+    .send-button:hover > svg,
+    .effects-toggle:hover > svg,
+    .sources a:hover,
+    .sources-trigger:hover
+  ) {
+  transform: none;
+}
+.effects-paused *,
+.effects-paused *::before,
+.effects-paused *::after {
+  animation-play-state: paused !important;
+}
+
+@media (forced-colors: active) {
+  .flow-field {
+    display: none;
+  }
+  .thinking-orb,
+  .chat-working {
+    border: 1px solid CanvasText;
+  }
+}
+
+.thought-dots { display: block; color: var(--accent-dim); }
+.thought-dots circle {
+  fill: currentColor;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: thought-wave 2.1s ease-in-out infinite;
+}
+.thought-dots[data-active='false'] circle { animation-play-state: paused; }
+@keyframes thought-wave {
+  0%, 75%, 100% { opacity: .45; transform: translateY(1px) scale(.82); }
+  35% { opacity: 1; transform: translateY(-2px) scale(1.16); }
+}
+.stream-tip::after {
+  content: '';
+  display: inline-block;
+  inline-size: .41em;
+  block-size: .41em;
+  margin-inline: .16em -.57em;
+  vertical-align: .12em;
+  border-radius: 50%;
+  background: var(--accent);
+  pointer-events: none;
+}

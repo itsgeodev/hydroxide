@@ -3,7 +3,7 @@ import { Eye, EyeSlash, Plus } from '@phosphor-icons/react';
 import { API_FORMATS } from '../lib/provider-formats.js';
 import ProviderHeaders from './ProviderHeaders.jsx';
 
-export default function CustomProviderForm({ onCreate, onCancel }) {
+export default function CustomProviderForm({ onCreate, onCancel, cloud }) {
   const formId = useId();
   const [name, setName] = useState('');
   const [type, setType] = useState('openai');
@@ -28,7 +28,7 @@ export default function CustomProviderForm({ onCreate, onCancel }) {
     try {
       url = new URL(baseUrl.trim());
       if (
-        !['https:', 'http:'].includes(url.protocol) ||
+        !(cloud ? ['https:'] : ['https:', 'http:']).includes(url.protocol) ||
         url.username ||
         url.password ||
         url.search ||
@@ -37,7 +37,7 @@ export default function CustomProviderForm({ onCreate, onCancel }) {
         throw new Error();
     } catch {
       setError(
-        'Enter an HTTP or HTTPS base URL without embedded credentials, query parameters, or fragments.',
+        `Enter an ${cloud ? 'HTTPS' : 'HTTP or HTTPS'} base URL without embedded credentials, query parameters, or fragments.`,
       );
       urlInput.current?.focus();
       return;
@@ -64,7 +64,7 @@ export default function CustomProviderForm({ onCreate, onCancel }) {
       <div className="settings-section-title">
         <div>
           <h3 id={`${formId}-title`}>Connect a custom provider</h3>
-          <p>Connect a compatible service or local server.</p>
+          <p>{cloud ? 'Connect a service with a public HTTPS endpoint.' : 'Connect a compatible service or local server.'}</p>
         </div>
       </div>
       <fieldset className="custom-provider-formats">
@@ -159,7 +159,7 @@ export default function CustomProviderForm({ onCreate, onCancel }) {
             </button>
           </div>
           <small>
-            Optional for local servers or custom header authentication.
+            {cloud ? 'Optional if your provider uses custom header authentication.' : 'Optional for local servers or custom header authentication.'}
           </small>
         </div>
       </div>

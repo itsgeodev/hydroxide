@@ -7,7 +7,7 @@ import {
   needsModelAutofill,
 } from '../../shared/model-pricing.js';
 
-export default function PricingAutofill({ provider, providers, onApply }) {
+export default function PricingAutofill({ provider, providers, onApply, cloud, connectionFetch = fetch }) {
   const [selection, setSelection] = useState('');
   const [source, setSource] = useState('');
   const [override, setOverride] = useState(false);
@@ -40,15 +40,15 @@ export default function PricingAutofill({ provider, providers, onApply }) {
       for (let start = 0; start < models.length; start += AUTOFILL_BATCH_SIZE) {
         const batch = models.slice(start, start + AUTOFILL_BATCH_SIZE);
         setStatus(`Checking models ${start + 1}–${start + batch.length} of ${models.length}…`);
-        const response = await fetch('/api/models/autofill', {
+        const response = await connectionFetch('/api/models/autofill', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: request.signal,
           body: JSON.stringify({
-            provider: {
+            ...(cloud ? { providerId: agent.provider.id } : { provider: {
               ...agent.provider,
               models: agent.provider.models.filter((model) => model.id === agent.id),
-            },
+            } }),
             model: agent.id,
             source: source.trim(),
             models: batch.map(({ id, name }) => ({ id, name })),

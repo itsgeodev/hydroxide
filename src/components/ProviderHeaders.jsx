@@ -1,7 +1,10 @@
 import { useId, useState } from 'react';
 import { Eye, EyeSlash, Plus, X } from '@phosphor-icons/react';
+import { accounts } from '#workspace-edition';
 
-function HeaderRow({ header, index, onChange, onRemove }) {
+const StoredSecret = accounts?.StoredSecret;
+
+function HeaderRow({ header, index, onChange, onRemove, onSaveValue }) {
   const [visible, setVisible] = useState(false);
   const rowId = useId();
   return (
@@ -26,7 +29,13 @@ function HeaderRow({ header, index, onChange, onRemove }) {
       </label>
       <div className="settings-field">
         <label htmlFor={rowId}>Value</label>
-        <div className="settings-secret">
+        {StoredSecret && onSaveValue ? <StoredSecret
+          id={rowId}
+          label={`Header value ${index + 1}`}
+          configured={header.hasValue}
+          limit={8192}
+          onSave={(value, clear) => onSaveValue(header.id, value, clear)}
+        /> : <div className="settings-secret">
           <input
             id={rowId}
             type={visible ? 'text' : 'password'}
@@ -45,7 +54,7 @@ function HeaderRow({ header, index, onChange, onRemove }) {
           >
             {visible ? <EyeSlash size={16} /> : <Eye size={16} />}
           </button>
-        </div>
+        </div>}
       </div>
       <button
         type="button"
@@ -60,7 +69,7 @@ function HeaderRow({ header, index, onChange, onRemove }) {
   );
 }
 
-export default function ProviderHeaders({ headers = [], onChange }) {
+export default function ProviderHeaders({ headers = [], onChange, onSaveValue }) {
   const titleId = useId();
   return (
     <section className="provider-headers-section" aria-labelledby={titleId}>
@@ -90,6 +99,7 @@ export default function ProviderHeaders({ headers = [], onChange }) {
             <HeaderRow
               key={header.id || index}
               header={header}
+              onSaveValue={onSaveValue}
               index={index}
               onChange={(next) => onChange(headers.map((entry, i) => (i === index ? next : entry)))}
               onRemove={() => onChange(headers.filter((_, i) => i !== index))}

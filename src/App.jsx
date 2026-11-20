@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   ArrowUp,
@@ -23,6 +23,7 @@ import {
 import ModelPicker from './components/ModelPicker.jsx';
 import ChatCosts from './components/ChatCosts.jsx';
 import Message from './components/Message.jsx';
+import { accounts, touchLayout } from '#workspace-edition';
 import brandMark from './assets/hydroxide.svg?raw';
 import {
   FlowField,
@@ -64,10 +65,15 @@ import {
   applyColorSettings,
   clearAppliedColorSettings,
 } from './lib/theme.js';
+import './settings.css';
 
 const Settings = lazy(() => import('./components/Settings.jsx'));
 const ImageGenerationCard = lazy(() => import('./components/ImageGenerationCard.jsx'));
 const compactQuery = '(max-width: 800px)';
+const useAccountWorkspace = accounts?.useWorkspace ?? (() => null);
+const useTouchLayout = touchLayout?.useLayout ?? (() => false);
+const useSidebarSwipe = touchLayout?.useSidebarSwipe ?? (() => {});
+const BackupPassword = accounts?.BackupPassword;
 
 function download(content, filename, type = 'application/json') {
   const url = URL.createObjectURL(new Blob([content], { type }));
@@ -78,9 +84,11 @@ function download(content, filename, type = 'application/json') {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export default function App() {
-  const modifierKey = /Mac/.test(navigator.platform) ? 'Command' : 'Ctrl';
+export default function App({ account: session = null, onSignOut }) {
+  const account = accounts ? session : null;
+  const modifierKey = /Mac|iPhone|iPad/.test(navigator.platform) ? 'Command' : 'Ctrl';
   const [workspace, updateWorkspace] = useState(() => {
+    if (account) return accounts.loadWorkspace(account, !touchLayout?.matches());
     try {
       return loadWorkspace();
     } catch {
@@ -103,13 +111,18 @@ export default function App() {
   });
   const [settingsTab, setSettingsTab] = useState(null);
   const [compact, setCompact] = useState(() => window.matchMedia(compactQuery).matches);
-  const [sidebarOpen, setSidebarOpen] = useState(() => !compact);
-  const sidebarModal = compact && sidebarOpen;
+  const mobileLayout = useTouchLayout();
+  const sidebarOverlay = compact || mobileLayout;
+  const [sidebarOpen, setSidebarOpen] = useState(() => !sidebarOverlay);
+  const sidebarModal = sidebarOverlay && sidebarOpen;
+  const [chatMenuId, setChatMenuId] = useState(null);
   const [searching, setSearching] = useState(false);
   const [search, setSearch] = useState('');
   const chatJobs = useGenerationJobs();
   const imageJobs = useGenerationJobs();
   const [importingWorkspace, setImportingWorkspace] = useState(false);
+  const [backupPassword, setBackupPassword] = useState(null);
+  const passwordRequest = useRef(null);
   const importLock = useRef(false);
   const [completionStatus, setCompletionStatus] = useState('');
   const [toast, setToast] = useState(workspace.loadError || '');
@@ -128,24 +141,40 @@ export default function App() {
     sidebarTrigger = useRef(null),
     nearBottom = useRef(true);
   const latestWorkspace = useRef(workspace);
+  const workspaceChanged = useRef(null);
   const freshMessages = useRef(new Set());
   const setWorkspace = useCallback((update) => {
     const before = latestWorkspace.current;
     const next = typeof update === 'function' ? update(before) : update;
     latestWorkspace.current = next;
     updateWorkspace(next);
+    workspaceChanged.current?.(before, next);
   }, []);
+  const cloud = useAccountWorkspace(account, latestWorkspace, setWorkspace);
+  workspaceChanged.current = cloud?.workspaceChanged;
+  const images = useMemo(() => account
+    ? accounts.createMedia(account.username)
+    : { getImage, saveImages, putImages, deleteImages, exportImages }, [account]);
   const { settings, chats, currentChatId, selectedModel, draft } = workspace;
   const webEnabled = workspace.webEnabled ?? settings.webSearch.enabled;
   const setDraft = (draft) => setWorkspace((current) => current.draft === draft ? current : { ...current, draft });
   const setWebEnabled = (webEnabled) => setWorkspace((current) => current.webEnabled === webEnabled ? current : { ...current, webEnabled });
   const motionEnabled = useVisualEffects(settings.effects !== false);
+  useSidebarSwipe(main, sidebar, sidebarOverlay, sidebarOpen, motionEnabled, setSidebarOpen);
   const searchProvider = settings.webSearch.provider;
   const searchProviderName = searchProvider === 'exa' ? 'Exa' : 'Tavily';
   const activeChat = chats.find((c) => c.id === currentChatId);
-  const generation = chatJobs.jobs.get(currentChatId);
-  const imageGeneration = imageJobs.jobs.get(currentChatId);
+  const remoteJob = (chatId, kind) => cloud?.live.activity.findLast(
+    (job) => job.chatId === chatId && job.kind === kind && !job.finished,
+  );
+  const localGeneration = chatJobs.jobs.get(currentChatId);
+  const localImageGeneration = imageJobs.jobs.get(currentChatId);
+  const generation = localGeneration || remoteJob(currentChatId, 'chat');
+  const imageGeneration = localImageGeneration || remoteJob(currentChatId, 'image');
   const status = generation?.status || '';
+  const remoteCompletion = cloud?.live.activity.findLast(
+    (job) => job.chatId === currentChatId && job.finished,
+  );
   const selectedProvider = settings.providers.find(
     (p) => p.id === selectedModel?.providerId && p.enabled !== false,
   );
@@ -162,6 +191,59 @@ export default function App() {
   }));
   const showSettings = useCallback((tab = 'providers') => setSettingsTab(tab), []);
   const notify = useCallback((message) => setToast(message), []);
+  const requestProvider = (provider) => account ? { providerId: provider.id } : { provider };
+  async function connectionFetch(path, options) {
+    if (!account) return fetch(path, options);
+    if (path.startsWith('/api/models')) await cloud.flush();
+    return fetch(path, {
+      ...options,
+      headers: { ...options.headers, 'X-Hydroxide-Account': account.username },
+    });
+  }
+  const askBackupPassword = () => new Promise((resolve) => {
+    if (passwordRequest.current) return resolve(null);
+    passwordRequest.current = resolve;
+    setBackupPassword(true);
+  });
+
+  async function signOut() {
+    try {
+      if (chatJobs.current.current.size || imageJobs.current.current.size || importLock.current)
+        throw new Error('Stop your running tasks or import before signing out.');
+      await cloud.flush();
+      await accounts.request('logout', { method: 'POST', username: account.username });
+      onSignOut();
+    } catch (error) {
+      if (error.status === 401) onSignOut();
+      else notify(error.message);
+    }
+  }
+
+  function saveCredential({ providerId, baseUrl, headerId, searchId }, value, clear) {
+    return cloud.commit((current) => {
+      const patch = { apiKey: value, clearApiKey: clear };
+      if (searchId) return { ...current, settings: {
+        ...current.settings, [searchId]: patch,
+      } };
+      const provider = current.settings.providers.find((item) => item.id === providerId);
+      if (!provider || provider.baseUrl !== baseUrl)
+        throw new Error('The provider URL changed. Check it and save the credential again.');
+      if (headerId && !provider.customHeaders.some((header) => header.id === headerId))
+        throw new Error('This header was removed on another device.');
+      const updated = headerId ? {
+        ...provider,
+        customHeaders: provider.customHeaders.map((header) => header.id === headerId
+          ? { ...header, value, clearValue: clear } : header),
+      } : { ...provider, ...patch };
+      return { ...current, settings: { ...current.settings,
+        providers: current.settings.providers.map((item) => item.id === providerId ? updated : item),
+      } };
+    });
+  }
+
+  const addCloudProvider = (provider) => cloud.commit((current) => ({
+    ...current, settings: { ...current.settings, providers: [...current.settings.providers, provider] },
+  }));
 
   useLayoutEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -177,6 +259,7 @@ export default function App() {
       root.style.setProperty('--brand-image', `url("${url}")`);
       if (favicon) favicon.href = url;
       if (themeColor) themeColor.content = palette.page;
+      touchLayout?.updateIcon(palette);
     };
     apply();
     const update = () => {
@@ -206,8 +289,12 @@ export default function App() {
     const persist = () => {
       const current = latestWorkspace.current;
       if (current.storageLocked || current === lastSaved) return;
+      if (account && lastSaved && current.currentChatId === lastSaved.currentChatId &&
+          current.draft === lastSaved.draft && current.selectedModel === lastSaved.selectedModel &&
+          current.webEnabled === lastSaved.webEnabled) return;
       try {
-        saveWorkspace(current);
+        if (account) accounts.saveWorkspace(account.username, current);
+        else saveWorkspace(current);
         lastSaved = current;
       } catch {
         setToast('Your device storage is full or unavailable. Export a backup to keep your work.');
@@ -223,7 +310,7 @@ export default function App() {
       window.removeEventListener('pagehide', persist);
       persist();
     };
-  }, []);
+  }, [account]);
   useEffect(() => {
     const media = window.matchMedia(compactQuery);
     const update = () => setCompact(media.matches);
@@ -231,8 +318,8 @@ export default function App() {
     return () => media.removeEventListener('change', update);
   }, []);
   useLayoutEffect(() => {
-    setSidebarOpen(!compact);
-  }, [compact]);
+    setSidebarOpen(!sidebarOverlay);
+  }, [sidebarOverlay]);
   useEffect(() => {
     document.title = activeChat ? `${activeChat.title} · Hydroxide Chat` : 'Hydroxide Chat';
   }, [activeChat?.title]);
@@ -356,13 +443,13 @@ export default function App() {
         setWorkspace((w) => ({ ...w, currentChatId: null }));
         setDraft('');
         setWebEnabled(null);
-        if (compact) setSidebarOpen(false);
+        if (sidebarOverlay) setSidebarOpen(false);
         composer.current?.focus();
       }
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [compact]);
+  }, [sidebarOverlay]);
   useEffect(() => {
     if (rename && renameDialog.current && !renameDialog.current.open)
       renameDialog.current.showModal();
@@ -372,7 +459,7 @@ export default function App() {
     setDraft('');
     setWebEnabled(null);
     setSearch('');
-    if (compact) setSidebarOpen(false);
+    if (sidebarOverlay) setSidebarOpen(false);
     requestAnimationFrame(() => composer.current?.focus());
   }
   function patchMessage(chatId, messageId, patch) {
@@ -423,7 +510,7 @@ export default function App() {
     }
   }
   async function generateImage(chatId, messageId) {
-    if (imageJobs.current.current.has(chatId) || importLock.current) return;
+    if (imageJobs.current.current.has(chatId) || remoteJob(chatId, 'image') || importLock.current) return;
     const current = latestWorkspace.current;
     const message = current.chats
       .find((chat) => chat.id === chatId)
@@ -458,15 +545,17 @@ export default function App() {
     });
     let reader;
     try {
-      const response = await fetch('/api/images', {
+      if (account) await cloud.flush();
+      const response = await connectionFetch('/api/images', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: requestController.signal,
         body: JSON.stringify({
-          provider,
+          ...requestProvider(provider),
           model: imageModel.id,
           prompt: request.prompt,
           aspectRatio: request.aspectRatio,
+          ...(account && cloud.live.preferences.generation && { activity: { chatId, messageId } }),
         }),
       });
       if (!response.ok) {
@@ -510,9 +599,9 @@ export default function App() {
       if (!complete || !generated.length)
         throw new Error('No complete image was received. You can try again.');
       if (requestController.signal.aborted) throw new DOMException('Stopped', 'AbortError');
-      const saved = await saveImages(generated);
+      const saved = await images.saveImages(generated);
       if (requestController.signal.aborted) {
-        await deleteImages(saved.map((image) => image.id)).catch(() => {});
+        await images.deleteImages(saved.map((image) => image.id)).catch(() => {});
         throw new DOMException('Stopped', 'AbortError');
       }
       patchImageRequest(chatId, messageId, {
@@ -527,7 +616,7 @@ export default function App() {
         messages: chat.messages.filter((item) => item.id !== messageId || chat.id !== chatId),
       }));
       const keep = new Set(imageIds(otherChats));
-      deleteImages(
+      images.deleteImages(
         (request.images || []).map((image) => image.id).filter((id) => !keep.has(id)),
       ).catch(() => {});
     } catch (error) {
@@ -552,22 +641,24 @@ export default function App() {
     let complete = false;
     let reader;
     try {
-      const response = await fetch('/api/chat', {
+      if (account) await cloud.flush();
+      const response = await connectionFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: requestController.signal,
         body: JSON.stringify({
-          provider: selectedProvider,
+          ...requestProvider(selectedProvider),
           model: model.id,
           messages: conversationMessages(history),
           imagesEnabled: settings.imageRequests !== false,
           systemPrompt: settings.systemPrompt,
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           temperature: settings.temperature,
+          ...(account && cloud.live.preferences.generation && { activity: { chatId, messageId: assistant.id } }),
           web: {
             enabled: webEnabled,
             provider: searchProvider,
-            apiKey: settings[searchProvider].apiKey,
+            ...(!account && { apiKey: settings[searchProvider].apiKey }),
           },
         }),
       });
@@ -621,11 +712,11 @@ export default function App() {
         throw new Error('The connection ended before the response finished. You can try again.');
       if (latestWorkspace.current.currentChatId === chatId) setCompletionStatus('Response ready.');
       if (settings.autoRename && history.filter((m) => m.role === 'user').length === 1) {
-        fetch('/api/title', {
+        connectionFetch('/api/title', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            provider: selectedProvider,
+            ...requestProvider(selectedProvider),
             model: model.id,
             messages: conversationMessages(history),
           }),
@@ -737,22 +828,32 @@ export default function App() {
     }));
     runChat(activeChat.id, history, assistant);
   }
-  async function exportBackup(category = 'all') {
+  async function exportBackup(category = 'all', includeCredentials = false) {
     try {
-      const current = latestWorkspace.current;
+      let current = latestWorkspace.current;
+      let credentials;
+      if (account && ['all', 'providers'].includes(category)) {
+        ({ workspace: current, credentials } = await cloud.exportCredentials(category));
+      } else if (account) {
+        current = (await cloud.flush()).workspace;
+      }
       const media =
         category === 'providers' || category === 'preferences'
           ? []
-          : await exportImages(current.chats);
-      const content =
+          : await images.exportImages(current.chats);
+      const options = { includeCredentials: !account && includeCredentials };
+      let content =
         category === 'all'
-          ? serializeBackup(current, media)
-          : serializeCategoryBackup(current, category, media);
+          ? serializeBackup(current, media, options)
+          : serializeCategoryBackup(current, category, media, options);
+      if (credentials) content = JSON.stringify({ ...JSON.parse(content), credentials }, null, 2);
       download(
         content,
         `hydroxide-${category}-backup-${new Date().toISOString().slice(0, 10)}.json`,
       );
-      notify('Backup exported.');
+      notify(
+        credentials ? 'Backup exported with encrypted credentials.' : 'Backup exported.',
+      );
     } catch (error) {
       notify(error.message || 'Could not export this workspace.');
     }
@@ -771,12 +872,13 @@ export default function App() {
       if (file.size > 250 * 1024 * 1024)
         throw new Error('This backup is too large. Maximum size is 250 MB.');
       const data = JSON.parse(await file.text());
-      if (data.credentials || backupHasPlaintextCredentials(data))
+      if (!account && (data.credentials || backupHasPlaintextCredentials(data)))
         throw new Error('Choose a workspace backup that was exported with credentials omitted.');
       const category = data.category || 'all';
       if (category !== requestedCategory)
         throw new Error(`Choose “${category}” in Data & backups to import this file.`);
-      const current = latestWorkspace.current;
+      const before = account ? await cloud.flush() : null;
+      const current = before?.workspace || latestWorkspace.current;
       const scoped = category === 'all' ? null : validateCategoryBackup(data, current);
       const next = scoped?.workspace || validateWorkspace(data);
       const media =
@@ -785,7 +887,7 @@ export default function App() {
           : [];
       const replacesSearchKey = WEB_PROVIDERS.some(({ id }) => {
         const currentKey = current.settings[id]?.apiKey;
-        return currentKey && currentKey !== next.settings[id]?.apiKey;
+        return current.settings[id]?.hasApiKey || (currentKey && currentKey !== next.settings[id]?.apiKey);
       });
       if (current.chats.length || current.settings.providers.length || replacesSearchKey) {
         const confirmation =
@@ -806,12 +908,18 @@ export default function App() {
                 ...image,
                 id: remap.get(image.id) || image.id,
               }));
-      await putImages(imported);
+      const legacyBackup = data.credentials?.version === 1;
+      const password = legacyBackup ? await askBackupPassword() : undefined;
+      if (legacyBackup && !password) return;
+      await images.putImages(imported);
       try {
-        saveWorkspace(next);
-        setWorkspace(next);
+        if (account) await cloud.restoreWorkspace(next, before, { category, password, credentials: data.credentials });
+        else {
+          saveWorkspace(next);
+          setWorkspace(next);
+        }
       } catch (error) {
-        await deleteImages(imported.map((image) => image.id)).catch(() => {});
+        await images.deleteImages(imported.map((image) => image.id)).catch(() => {});
         throw error;
       }
       notify(
@@ -822,7 +930,7 @@ export default function App() {
       if (category === 'all' || category === 'chats') {
         const oldIds = new Set(imageIds(current.chats));
         const newIds = new Set(imageIds(next.chats));
-        deleteImages([...oldIds].filter((id) => !newIds.has(id))).catch(() => {});
+        images.deleteImages([...oldIds].filter((id) => !newIds.has(id))).catch(() => {});
       }
     } catch (error) {
       notify(
@@ -836,12 +944,13 @@ export default function App() {
     }
   }
   function deleteChat(chat) {
-    if (chatJobs.jobs.has(chat.id) || imageJobs.jobs.has(chat.id)) {
+    if (chatJobs.jobs.has(chat.id) || imageJobs.jobs.has(chat.id) ||
+        remoteJob(chat.id, 'chat') || remoteJob(chat.id, 'image')) {
       notify('Stop this response before deleting the conversation.');
       return;
     }
     if (
-      !window.confirm(`Delete “${chat.title}”? This removes it from this device.`)
+      !window.confirm(`Delete “${chat.title}”? This removes it from ${account ? 'your account' : 'this device'}.`)
     )
       return;
     setWorkspace((w) => ({
@@ -850,18 +959,18 @@ export default function App() {
       currentChatId: w.currentChatId === chat.id ? null : w.currentChatId,
     }));
     const keep = new Set(imageIds(chats.filter((item) => item.id !== chat.id)));
-    deleteImages(imageIds([chat]).filter((id) => !keep.has(id))).catch(() => {});
+    images.deleteImages(imageIds([chat]).filter((id) => !keep.has(id))).catch(() => {});
     notify('Conversation deleted.');
   }
   function deleteAllChats() {
     const current = latestWorkspace.current;
     if (importLock.current || !current.chats.length) return;
-    if (!window.confirm('Delete all chats and their generated images from this browser?')) return;
+    if (!window.confirm(`Delete all chats and their generated images from ${account ? 'your account' : 'this browser'}?`)) return;
     if (!window.confirm('Permanently delete all chats? This cannot be undone.')) return;
 
     const next = { ...current, chats: [], currentChatId: null, draft: '', webEnabled: null };
     try {
-      saveWorkspace(next);
+      if (!account) saveWorkspace(next);
     } catch {
       notify('Could not delete chats because browser storage is unavailable.');
       return;
@@ -874,7 +983,7 @@ export default function App() {
     setRename(null);
     setCompletionStatus('');
     notify('All chats deleted.');
-    deleteImages(imageIds(current.chats)).catch(() => {
+    images.deleteImages(imageIds(current.chats)).catch(() => {
       notify('All chats were deleted, but some generated images could not be removed from browser storage.');
     });
   }
@@ -888,7 +997,7 @@ export default function App() {
 
   return (
     <div
-      className={`app ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'} ${compact ? 'sidebar-overlay' : ''} ${settings.effects === false ? 'effects-off' : ''} ${!motionEnabled ? 'effects-paused' : ''}`}
+      className={`app ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'} ${sidebarOverlay ? 'sidebar-overlay' : ''} ${settings.effects === false ? 'effects-off' : ''} ${!motionEnabled ? 'effects-paused' : ''}`}
       onPointerDownCapture={(event) => playInteraction(event, motionEnabled)}
     >
       <a
@@ -917,9 +1026,9 @@ export default function App() {
           <button
             className="icon-button collapse-sidebar"
             onClick={() => setSidebarOpen(false)}
-            aria-label={compact ? 'Close sidebar' : 'Collapse sidebar'}
+            aria-label={sidebarOverlay ? 'Close sidebar' : 'Collapse sidebar'}
           >
-            {compact ? <X size={20} /> : <SidebarSimple size={19} />}
+            {sidebarOverlay ? <X size={20} /> : <SidebarSimple size={19} />}
           </button>
         </div>
         <button className="new-chat" onClick={newChat}>
@@ -970,19 +1079,35 @@ export default function App() {
                 onClick={() => {
                   setWorkspace((w) => ({ ...w, currentChatId: chat.id }));
                   setDraft('');
-                  if (compact) setSidebarOpen(false);
+                  if (sidebarOverlay) setSidebarOpen(false);
                 }}
               >
                 <ChatCircle size={17} />
                 <span>{chat.title}</span>
-                {(chatJobs.jobs.has(chat.id) || imageJobs.jobs.has(chat.id)) && (
+                {(chatJobs.jobs.has(chat.id) || imageJobs.jobs.has(chat.id) ||
+                  remoteJob(chat.id, 'chat') || remoteJob(chat.id, 'image')) && (
                   <span className="chat-working" role="img" aria-label="Generating" />
                 )}
               </button>
-              <DropdownMenu.Root>
+              <DropdownMenu.Root
+                open={chatMenuId === chat.id}
+                onOpenChange={(open) => {
+                  if (open) setChatMenuId(chat.id);
+                  else setChatMenuId((id) => id === chat.id ? null : id);
+                }}
+              >
                 <DropdownMenu.Trigger
                   className="chat-menu-trigger icon-button"
                   aria-label={`Options for ${chat.title}`}
+                  onPointerDown={(event) => {
+                    // Wait for a completed tap so a swipe across the trigger can dismiss the sidebar.
+                    if (touchLayout && sidebarModal && event.button === 0 && !event.ctrlKey)
+                      event.preventDefault();
+                  }}
+                  onClick={(event) => {
+                    if (touchLayout && sidebarModal && !event.ctrlKey)
+                      setChatMenuId((id) => id === chat.id ? null : chat.id);
+                  }}
                 >
                   <DotsThree size={20} />
                 </DropdownMenu.Trigger>
@@ -1040,7 +1165,7 @@ export default function App() {
             <span className="profile-avatar">Y</span>
             <span>
               <strong>Your workspace</strong>
-              <small>Stored on this device</small>
+              <small>{account ? 'Saved to your account' : 'Stored on this device'}</small>
             </span>
             <ShieldCheck size={16} />
           </div>
@@ -1076,6 +1201,7 @@ export default function App() {
               providers={settings.providers}
               selected={selectedModel}
               onSelect={(value) => {
+                cloud?.live.selectModel(value);
                 setWorkspace((w) => ({ ...w, selectedModel: value }));
               }}
               onSettings={() => showSettings()}
@@ -1143,17 +1269,19 @@ export default function App() {
                       >
                         <ImageGenerationCard
                           request={
-                            message.imageRequest.status === 'generating' &&
-                            imageGeneration?.messageId !== message.id
-                              ? { ...message.imageRequest, status: 'ready', statusMessage: '' }
-                              : message.imageRequest
+                            !localImageGeneration && imageGeneration?.messageId === message.id
+                              ? { ...message.imageRequest, status: 'generating', statusMessage: imageGeneration.status }
+                              : message.imageRequest.status === 'generating' &&
+                                  localImageGeneration?.messageId !== message.id
+                                ? { ...message.imageRequest, status: 'ready', statusMessage: '' }
+                                : message.imageRequest
                           }
                           providers={settings.providers}
-                          readImage={getImage}
+                          readImage={images.getImage}
                           onChange={(patch) => patchImageRequest(activeChat.id, message.id, patch)}
                           onGenerate={() => generateImage(activeChat.id, message.id)}
-                          onStop={imageGeneration?.messageId === message.id
-                            ? () => imageGeneration.controller.abort()
+                          onStop={localImageGeneration?.messageId === message.id
+                            ? () => localImageGeneration.controller.abort()
                             : undefined}
                           onSettings={() => showSettings('providers')}
                           effects={settings.effects !== false}
@@ -1213,7 +1341,7 @@ export default function App() {
                     onClick={() => {
                       if (webEnabled) {
                         setWebEnabled(false);
-                      } else if (!settings[searchProvider].apiKey.trim()) {
+                      } else if (!settings[searchProvider].hasApiKey && !settings[searchProvider].apiKey.trim()) {
                         showSettings('web');
                         notify(`Add your ${searchProviderName} API key to enable web search.`);
                       } else setWebEnabled(true);
@@ -1232,11 +1360,11 @@ export default function App() {
                     </span>
                   )}
                 </div>
-                {generation ? (
+                {localGeneration ? (
                   <button
                     className="send-button stop-button"
                     type="button"
-                    onClick={() => generation.controller.abort()}
+                    onClick={() => localGeneration.controller.abort()}
                     aria-label="Stop generating"
                   >
                     <Stop size={16} weight="fill" />
@@ -1245,7 +1373,7 @@ export default function App() {
                   <button
                     className="send-button"
                     type="submit"
-                    disabled={importingWorkspace}
+                    disabled={Boolean(generation) || importingWorkspace}
                     aria-label="Send message"
                   >
                     <ArrowUp size={21} weight="bold" />
@@ -1257,7 +1385,7 @@ export default function App() {
           <div className="composer-footnote" id="composer-help">
             <span role="status" aria-live="polite">
               {generation ? status : imageGeneration ? imageGeneration.status :
-                activeChat ? 'AI can make mistakes.' : null}
+                remoteCompletion?.status || (activeChat ? 'AI can make mistakes.' : null)}
             </span>
             <span className="keyboard-hint">
               <kbd>Enter</kbd> to send <span>/</span>
@@ -1270,6 +1398,13 @@ export default function App() {
         <Suspense fallback={null}>
           <Settings
             settings={settings}
+            account={account?.username}
+            cloudStatus={cloud?.status}
+            live={cloud?.live}
+            onSignOut={signOut}
+            connectionFetch={connectionFetch}
+            onSaveCredential={account ? saveCredential : undefined}
+            onAddCloudProvider={account ? addCloudProvider : undefined}
             onChange={updateSettings}
             onClose={() => setSettingsTab(null)}
             initialTab={settingsTab}
@@ -1284,6 +1419,14 @@ export default function App() {
             onDismissNotification={() => setToast('')}
           />
         </Suspense>
+      )}
+      {BackupPassword && backupPassword && (
+        <BackupPassword onClose={(value) => {
+          const resolve = passwordRequest.current;
+          passwordRequest.current = null;
+          setBackupPassword(null);
+          resolve?.(value);
+        }} />
       )}
       <input
         ref={fileInput}

@@ -623,6 +623,11 @@ kbd {
   overflow: hidden;
   transform-origin: var(--radix-popover-content-transform-origin);
 }
+.model-picker-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 .popover-heading {
   display: flex;
   align-items: center;

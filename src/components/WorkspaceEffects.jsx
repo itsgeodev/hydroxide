@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { createPaperFlight } from '../lib/paper-flight.js';
+import { touchLayout } from '#workspace-edition';
 
 export function useVisualEffects(enabled = true) {
   const [reduced, setReduced] = useState(
@@ -37,6 +38,7 @@ export function playInteraction(event, enabled) {
   if (!enabled || event.button !== 0) return;
   const button = event.target.closest('button, [role="menuitem"], [role="option"]');
   if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') return;
+  if (touchLayout?.playPress(button)) return;
   const rect = button.getBoundingClientRect();
   const size = Math.max(rect.width, rect.height);
   const ripple = document.createElement('span');

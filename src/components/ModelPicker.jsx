@@ -11,7 +11,11 @@ import {
   FilmStrip,
 } from '@phosphor-icons/react';
 import { ModelIcon } from '../lib/providers.jsx';
+import { touchLayout } from '#workspace-edition';
 import { enabledModels } from '../../shared/model-capabilities.js';
+
+const useTouchLayout = touchLayout?.useLayout ?? (() => false);
+const ModelSheet = touchLayout?.ModelSheet;
 
 export default function ModelPicker({
   providers,
@@ -25,6 +29,7 @@ export default function ModelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const mobile = useTouchLayout();
   const headingId = useId();
   const optionsId = useId();
   const searchInput = useRef(null);
@@ -81,7 +86,7 @@ export default function ModelPicker({
       <CaretDown size={13} aria-hidden="true" />
     </>
   );
-  const content = (
+  const content = (closeControl = null) => (
     <>
       <div className="popover-heading">
         <span id={headingId}>
@@ -93,17 +98,20 @@ export default function ModelPicker({
                 ? 'Other models'
                 : 'Your chat models'}
         </span>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={() => {
-            changeOpen(false);
-            onSettings();
-          }}
-          aria-label="Manage providers"
-        >
-          <SlidersHorizontal size={18} aria-hidden="true" />
-        </button>
+        <div className="model-picker-actions">
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => {
+              changeOpen(false);
+              onSettings();
+            }}
+            aria-label="Manage providers"
+          >
+            <SlidersHorizontal size={18} aria-hidden="true" />
+          </button>
+          {closeControl}
+        </div>
       </div>
       <label className="model-search">
         <MagnifyingGlass size={17} aria-hidden="true" />
@@ -188,6 +196,19 @@ export default function ModelPicker({
       </button>
     </>
   );
+  if (mobile) {
+    return (
+      <ModelSheet
+        open={open}
+        onOpenChange={changeOpen}
+        headingId={headingId}
+        triggerProps={triggerProps}
+        triggerContent={triggerContent}
+      >
+        {content}
+      </ModelSheet>
+    );
+  }
   return (
     <Popover.Root open={open} onOpenChange={changeOpen}>
       <Popover.Trigger {...triggerProps}>{triggerContent}</Popover.Trigger>
@@ -203,7 +224,7 @@ export default function ModelPicker({
             searchInput.current?.focus();
           }}
         >
-          {content}
+          {content()}
           <Popover.Arrow className="popover-arrow" />
         </Popover.Content>
       </Popover.Portal>

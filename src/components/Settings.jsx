@@ -24,6 +24,7 @@ import { PRESETS, ICONS, ModelIcon, createProvider, inferIcon } from '../lib/pro
 import { API_FORMATS } from '../lib/provider-formats.js';
 import { MODEL_KINDS, inferModelKind } from '../../shared/model-capabilities.js';
 import { applyModelAutofill } from '../../shared/model-pricing.js';
+import { accounts } from '#workspace-edition';
 import ModelPricing from './ModelPricing.jsx';
 import PricingAutofill from './PricingAutofill.jsx';
 import CustomProviderForm from './CustomProviderForm.jsx';
@@ -57,6 +58,7 @@ const SEARCH_PROVIDERS = {
     placeholder: 'Enter your Exa API key',
   },
 };
+const StoredSecret = accounts?.StoredSecret;
 
 function Switch({ checked, onChange, label }) {
   return (
@@ -122,6 +124,13 @@ function ColorHexInput({ value, label, onChange }) {
 
 export default function Settings({
   settings,
+  account: username,
+  cloudStatus,
+  live,
+  onSignOut,
+  connectionFetch = fetch,
+  onSaveCredential,
+  onAddCloudProvider,
   onChange,
   onClose,
   onExport,
@@ -132,6 +141,7 @@ export default function Settings({
   notification,
   onDismissNotification,
 }) {
+  const account = accounts ? username : null;
   const [tab, setTab] = useState(
     tabs.some((item) => item.id === initialTab) ? initialTab : 'providers',
   );
@@ -149,6 +159,7 @@ export default function Settings({
   const [manualKind, setManualKind] = useState('auto');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [backupCategory, setBackupCategory] = useState('all');
+  const [migrationExport, setMigrationExport] = useState(false);
   const [editingPalette, setEditingPalette] = useState(null);
   const [prefersDark, setPrefersDark] = useState(() =>
     window.matchMedia('(prefers-color-scheme: dark)').matches,
@@ -245,9 +256,16 @@ export default function Settings({
       models: models.map((model) => (model.id === id ? { ...model, ...patch } : model)),
     });
   }
-  function addProvider(preset) {
+  async function addProvider(preset) {
     const added = { ...createProvider(preset), apiKey: preset.apiKey || '' };
-    update({ providers: [...latest.current.providers, added] });
+    try {
+      if (onAddCloudProvider) await onAddCloudProvider(added);
+      else update({ providers: [...latest.current.providers, added] });
+    } catch (error) {
+      if (customizing) throw error;
+      setImportError(error.message);
+      return;
+    }
     setSelectedId(added.id);
     setAdding(false);
     setCustomizing(false);
@@ -268,10 +286,10 @@ export default function Settings({
     setImportError('');
     setImportSuccess('');
     try {
-      const response = await fetch('/api/models', {
+      const response = await connectionFetch('/api/models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider }),
+        body: JSON.stringify(account ? { providerId } : { provider }),
         signal: controller.signal,
       });
       const data = await response.json();
@@ -408,7 +426,7 @@ export default function Settings({
           </nav>
           <div className="settings-device-note">
             <Database size={17} />
-            <span>Stored on this device</span>
+            <span>{account || 'Stored on this device'}</span>
           </div>
         </aside>
         <section className="settings-main">
@@ -472,6 +490,7 @@ export default function Settings({
                 </div>
                 {adding && customizing && (
                   <CustomProviderForm
+                    cloud={Boolean(account)}
                     onCreate={addProvider}
                     onCancel={() => {
                       setCustomizing(false);
@@ -592,14 +611,20 @@ export default function Settings({
                       </label>
                       <div className="settings-field settings-field-key">
                         <label htmlFor={`${formId}-provider-key`}>API key</label>
-                        <SecretInput
+                        {account ? <StoredSecret
+                          key={provider.id}
+                          id={`${formId}-provider-key`}
+                          label="Provider API key"
+                          configured={provider.hasApiKey}
+                          onSave={(value, clear) => onSaveCredential({ providerId: provider.id, baseUrl: provider.baseUrl }, value, clear)}
+                        /> : <SecretInput
                           id={`${formId}-provider-key`}
                           value={provider.apiKey}
                           onChange={(event) => updateProvider({ apiKey: event.target.value })}
                           label="Provider API key"
                           placeholder="Enter your API key"
-                        />
-                        <small>Stored on this device and used by your local backend.</small>
+                        />}
+                        <small>{account ? 'Encrypted on the server and used for this provider’s HTTPS origin.' : 'Stored on this device and used by your local backend.'}</small>
                       </div>
                       <label className="settings-field">
                         <span>Default icon</span>
@@ -642,6 +667,9 @@ export default function Settings({
                     <ProviderHeaders
                       headers={provider.customHeaders || []}
                       onChange={(customHeaders) => updateProvider({ customHeaders })}
+                      onSaveValue={account ? (headerId, value, clear) => onSaveCredential({
+                        providerId: provider.id, baseUrl: provider.baseUrl, headerId,
+                      }, value, clear) : undefined}
                     />
                     <section className="provider-model-section">
                       <div className="settings-section-title">
@@ -680,6 +708,8 @@ export default function Settings({
                       {autofillOpen && models.length > 0 && (
                         <PricingAutofill
                           key={provider.id}
+                          cloud={Boolean(account)}
+                          connectionFetch={connectionFetch}
                           provider={provider}
                           providers={settings.providers}
                           onApply={applyAutofill}
@@ -968,7 +998,13 @@ export default function Settings({
                   <label htmlFor={`${formId}-${searchProvider}`}>
                     {searchConnection.name} API key
                   </label>
-                  <SecretInput
+                  {account ? <StoredSecret
+                    key={searchProvider}
+                    id={`${formId}-${searchProvider}`}
+                    label={`${searchConnection.name} API key`}
+                    configured={settings[searchProvider]?.hasApiKey}
+                    onSave={(value, clear) => onSaveCredential({ searchId: searchProvider }, value, clear)}
+                  /> : <SecretInput
                     key={searchProvider}
                     id={`${formId}-${searchProvider}`}
                     value={settings[searchProvider]?.apiKey}
@@ -982,7 +1018,7 @@ export default function Settings({
                     }
                     placeholder={searchConnection.placeholder}
                     label={`${searchConnection.name} API key`}
-                  />
+                  />}
                   <small>
                     Need a key?{' '}
                     <a href={searchConnection.keyUrl} target="_blank" rel="noreferrer">
@@ -1021,6 +1057,22 @@ export default function Settings({
                 <header className="settings-page-heading">
                   <h2>Preferences</h2>
                 </header>
+                {account && (
+                  <section aria-labelledby="live-sync-heading">
+                    <div className="settings-section-title">
+                      <div>
+                        <h3 id="live-sync-heading">Live sync</h3>
+                        <p>Choose what follows you on this device. Chats and settings still save to your account.</p>
+                      </div>
+                    </div>
+                    {accounts.liveOptions.map(({ id, label, detail }) => (
+                      <div className="settings-option-row" key={id}>
+                        <div><strong>{label}</strong><p>{detail}</p></div>
+                        <Switch checked={live.preferences[id]} onChange={(value) => live.toggle(id, value)} label={label} />
+                      </div>
+                    ))}
+                  </section>
+                )}
                 <div className="settings-option-row">
                   <div>
                     <strong>Automatic chat titles</strong>
@@ -1268,15 +1320,21 @@ export default function Settings({
                   >
                     <option value="all">Everything</option>
                     <option value="chats">Chats and generated images</option>
-                    <option value="providers">Providers</option>
+                    <option value="providers">{account ? 'Providers and API keys' : 'Providers'}</option>
                     <option value="preferences">Preferences only</option>
                   </select>
                 </label>
+                {accounts && !account && ['all', 'providers'].includes(backupCategory) && (
+                  <label className="settings-option-row">
+                    <span>Include readable credentials for cloud migration</span>
+                    <input type="checkbox" checked={migrationExport} onChange={(event) => setMigrationExport(event.target.checked)} />
+                  </label>
+                )}
                 <div className="settings-backup-actions">
                   <button
                     type="button"
                     className="settings-button settings-button-primary"
-                    onClick={() => onExport(backupCategory)}
+                    onClick={() => onExport(backupCategory, migrationExport && ['all', 'providers'].includes(backupCategory))}
                   >
                     <ArrowDown size={18} />
                     Export selection
@@ -1292,15 +1350,25 @@ export default function Settings({
                 </div>
                 <div className="settings-note">
                   <Info size={19} />
-                  <p>Exports omit API keys and custom header values.</p>
+                  <p>
+                    {account
+                      ? 'Hydroxide encrypts credentials automatically. Restore hosted credentials by signing in to the account that exported them.'
+                      : accounts
+                        ? 'Exports omit credentials unless you include them for migration.'
+                        : 'Exports omit API keys and custom header values.'}
+                  </p>
                 </div>
                 <div className="settings-option-row settings-backup-detail">
                   <div>
-                    <strong>Local storage</strong>
+                    <strong>{account ? 'Account storage' : 'Local storage'}</strong>
                     <p>
-                      Your chats, settings, and generated images are saved in this browser.
-                      Clearing browser data removes your workspace.
+                      {account
+                        ? 'Your chats, generated images, and preferences are saved to your account. Manage live sync in Preferences.'
+                        : 'Your chats, settings, and generated images are saved in this browser. Clearing browser data removes your workspace.'}
                     </p>
+                    {account && <button type="button" className="settings-text-button" onClick={onSignOut}>
+                      Sign out of {account}
+                    </button>}
                   </div>
                 </div>
                 <button
@@ -1333,9 +1401,9 @@ export default function Settings({
             )}
           </div>
           <footer className="settings-footer">
-            <span>
+            <span role={account ? 'status' : undefined}>
               <CheckCircle size={15} weight="fill" />
-              Changes saved on this device
+              {account ? cloudStatus : 'Changes saved on this device'}
             </span>
             <button
               type="button"

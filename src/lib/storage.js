@@ -216,10 +216,10 @@ function withoutCredentials(workspace) {
       ...settings,
       tavily: { apiKey: '' },
       exa: { apiKey: '' },
-      providers: settings.providers.map((provider) => ({
+      providers: settings.providers.map(({ hasApiKey, clearApiKey, ...provider }) => ({
         ...provider,
         apiKey: '',
-        customHeaders: (provider.customHeaders || []).map((header) => ({
+        customHeaders: (provider.customHeaders || []).map(({ hasValue, clearValue, ...header }) => ({
           ...header,
           value: '',
         })),
@@ -235,13 +235,13 @@ export function backupHasPlaintextCredentials(backup) {
     (Array.isArray(data.providers) && data.providers.some((provider) => provider?.apiKey ||
       (Array.isArray(provider?.customHeaders) && provider.customHeaders.some((header) => header?.value))));
 }
-export function serializeBackup(workspace, media = []) {
+export function serializeBackup(workspace, media = [], { includeCredentials = false } = {}) {
   return JSON.stringify(
     {
       app: 'Hydroxide Chat',
       version: 1,
       exportedAt: new Date().toISOString(),
-      ...withoutCredentials(workspace),
+      ...(includeCredentials ? workspace : withoutCredentials(workspace)),
       media,
     },
     null,
@@ -249,10 +249,10 @@ export function serializeBackup(workspace, media = []) {
   );
 }
 
-export function serializeCategoryBackup(workspace, category, media = []) {
+export function serializeCategoryBackup(workspace, category, media = [], { includeCredentials = false } = {}) {
   if (!SCOPED_BACKUP_CATEGORIES.has(category))
     throw new Error('Choose Chats, Providers, or Preferences for a scoped backup.');
-  const { settings } = withoutCredentials(workspace);
+  const { settings } = includeCredentials && category === 'providers' ? workspace : withoutCredentials(workspace);
   const data =
     category === 'chats'
       ? { chats: structuredClone(workspace.chats), currentChatId: workspace.currentChatId, draft: workspace.draft, webEnabled: workspace.webEnabled }
